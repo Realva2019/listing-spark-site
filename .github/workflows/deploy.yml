@@ -42,6 +42,8 @@ jobs:
           done
           FTP_SERVER=$(printf %s "$FTP_SERVER" | tr -d '[:space:]')
           FTP_USERNAME=$(printf %s "$FTP_USERNAME" | tr -d '[:space:]')
+          echo "Server certificate names:"
+          openssl s_client -starttls ftp -connect "$FTP_SERVER:21" </dev/null 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName | sed 's/\./[dot]/g' || true
           OPEN="open --env-password -u \"$FTP_USERNAME\" \"$FTP_SERVER\""
           LISTING=$(lftp -c "$SETTINGS; $OPEN; pwd; cls -1")
           echo "FTP root contents:"; echo "$LISTING"
