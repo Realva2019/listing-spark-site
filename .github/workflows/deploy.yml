@@ -1,9 +1,9 @@
 # Uploads site/listingspark-site/ to Hostinger over FTP whenever it changes on main.
 # One-time setup (GitHub repo → Settings → Secrets and variables → Actions):
-#   FTP_SERVER    e.g. ftp.yourdomain.com  (hPanel → Files → FTP Accounts)
+#   FTP_SERVER    the FTP IP from hPanel → Files → FTP Accounts
 #   FTP_USERNAME  the FTP username from the same page
 #   FTP_PASSWORD  the FTP password
-# Only changed files are uploaded after the first run, so the large video uploads once.
+# File times are restored from git history, so only files changed since the last deploy upload.
 name: Deploy to Hostinger
 
 on:
@@ -12,23 +12,34 @@ on:
     paths: ["site/listingspark-site/**"]
   workflow_dispatch:
 
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps
-          timeout: 120000
-          local-dir: ./site/listingspark-site/
-          # Hostinger FTP accounts usually land one level above public_html.
-          # If your FTP account opens directly inside public_html, change this to ./
-          server-dir: ./public_html/
-          exclude: |
-            **/.DS_Store
-            **/.git*
-            **/.git*/**
+          fetch-depth: 0
+
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp git-restore-mtime
+
+      - name: Restore file times from git
+        run: git restore-mtime site/listingspark-site
+
+      - name: Upload
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          SETTINGS="set ftp:ssl-force yes; set ftp:passive-mode yes; set net:timeout 30; set net:max-retries 5; set net:reconnect-interval-base 5"
+          LISTING=$(lftp --env-password -u "$FTP_USERNAME" "$FTP_SERVER" -e "$SETTINGS; pwd; cls -1; bye")
+          echo "FTP root contents:"; echo "$LISTING"
+          # Main Hostinger FTP accounts open one level above public_html; others open inside it.
+          if echo "$LISTING" | grep -qx 'public_html/\?'; then TARGET=public_html; else TARGET=.; fi
+          echo "Uploading into: $TARGET"
+          lftp --env-password -u "$FTP_USERNAME" "$FTP_SERVER" -e "$SETTINGS; mirror --reverse --only-newer --verbose --parallel=2 --exclude-glob .DS_Store site/listingspark-site/ $TARGET/; bye"
