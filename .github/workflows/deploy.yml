@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install lftp
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp git-restore-mtime
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp git-restore-mtime dnsutils
 
       - name: Restore file times from git
         run: git restore-mtime site/listingspark-site
@@ -42,8 +42,13 @@ jobs:
           done
           FTP_SERVER=$(printf %s "$FTP_SERVER" | tr -d '[:space:]')
           FTP_USERNAME=$(printf %s "$FTP_USERNAME" | tr -d '[:space:]')
-          echo "Server certificate names:"
-          openssl s_client -starttls ftp -connect "$FTP_SERVER:21" </dev/null 2>/dev/null | openssl x509 -noout -subject -ext subjectAltName | sed 's/\./[dot]/g' || true
+          # Hostinger's TLS certificate covers *.hstgr.io, not the bare IP. If FTP_SERVER is an IP,
+          # connect via its *.hstgr.io reverse-DNS name (checked to resolve back to the same IP).
+          HOST=$(dig +short -x "$FTP_SERVER" | sed 's/\.$//' | head -1)
+          echo "Reverse DNS: ${HOST//./[dot]}"
+          if [[ "$HOST" =~ ^[a-z0-9-]+\.hstgr\.io$ ]] && dig +short "$HOST" | grep -qxF "$FTP_SERVER"; then
+            FTP_SERVER=$HOST; echo "Connecting via ${HOST//./[dot]}"
+          fi
           OPEN="open --env-password -u \"$FTP_USERNAME\" \"$FTP_SERVER\""
           LISTING=$(lftp -c "$SETTINGS; $OPEN; pwd; cls -1")
           echo "FTP root contents:"; echo "$LISTING"
