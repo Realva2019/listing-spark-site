@@ -1,9 +1,7 @@
-# Uploads site/listingspark-site/ to Hostinger over FTP whenever it changes on main.
-# One-time setup (GitHub repo → Settings → Secrets and variables → Actions):
-#   FTP_SERVER    the FTP IP from hPanel → Files → FTP Accounts
-#   FTP_USERNAME  the FTP username from the same page
-#   FTP_PASSWORD  the FTP password
-# File times are restored from git history, so only files changed since the last deploy upload.
+# Uploads site/listingspark-site/ to Hostinger over SSH (rsync) whenever it changes on main.
+# Needs one repo secret (GitHub → Settings → Secrets and variables → Actions):
+#   FTP_PASSWORD  the hosting account password (Hostinger uses the same one for SSH)
+# Only files whose contents changed are uploaded. Nothing on the server is deleted.
 name: Deploy to Hostinger
 
 on:
@@ -16,43 +14,34 @@ concurrency:
   group: deploy
   cancel-in-progress: false
 
+env:
+  SSH_HOST: 145.79.28.35
+  SSH_PORT: "65002"
+  SSH_USER: u479143449
+  # Pinned server identity (ED25519, SHA256:pE4kPWLYqZmrucAlPSAxGVyZeQEbuWhZ51huZCqcIQM).
+  # If Hostinger ever moves the site to a new server, update this line and SSH_HOST.
+  KNOWN_HOST: "[145.79.28.35]:65002 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAStlCAQv1qmXXqMepywddOX0WJPwC7SLmO13lWQpwcL"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Install lftp
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lftp git-restore-mtime dnsutils
-
-      - name: Restore file times from git
-        run: git restore-mtime site/listingspark-site
+      - name: Set up SSH
+        run: |
+          sudo apt-get install -y -qq sshpass >/dev/null
+          mkdir -p ~/.ssh && echo "$KNOWN_HOST" > ~/.ssh/known_hosts
+          printf 'Host hostinger\n  HostName %s\n  Port %s\n  User %s\n  StrictHostKeyChecking yes\n  HostKeyAlgorithms ssh-ed25519\n' \
+            "$SSH_HOST" "$SSH_PORT" "$SSH_USER" > ~/.ssh/config
 
       - name: Upload
         env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          LFTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          SSHPASS: ${{ secrets.FTP_PASSWORD }}
         run: |
-          SETTINGS="set ftp:ssl-force yes; set ftp:passive-mode yes; set net:timeout 30; set net:max-retries 5; set net:reconnect-interval-base 5"
-          for v in FTP_SERVER FTP_USERNAME; do
-            val="${!v}"; echo "$v: ${#val} chars, whitespace chars: $(printf %s "$val" | tr -cd '[:space:]' | wc -c)"
-          done
-          FTP_SERVER=$(printf %s "$FTP_SERVER" | tr -d '[:space:]')
-          FTP_USERNAME=$(printf %s "$FTP_USERNAME" | tr -d '[:space:]')
-          # Hostinger's TLS certificate covers *.hstgr.io, not the bare IP. If FTP_SERVER is an IP,
-          # connect via its *.hstgr.io reverse-DNS name (checked to resolve back to the same IP).
-          HOST=$(dig +short -x "$FTP_SERVER" | sed 's/\.$//' | head -1)
-          echo "Reverse DNS: ${HOST//./[dot]}"
-          if [[ "$HOST" =~ ^[a-z0-9-]+\.hstgr\.io$ ]] && dig +short "$HOST" | grep -qxF "$FTP_SERVER"; then
-            FTP_SERVER=$HOST; echo "Connecting via ${HOST//./[dot]}"
-          fi
-          OPEN="open --env-password -u \"$FTP_USERNAME\" \"$FTP_SERVER\""
-          LISTING=$(lftp -c "$SETTINGS; $OPEN; pwd; cls -1")
-          echo "FTP root contents:"; echo "$LISTING"
-          # Main Hostinger FTP accounts open one level above public_html; others open inside it.
-          if echo "$LISTING" | grep -qx 'public_html/\?'; then TARGET=public_html; else TARGET=.; fi
-          echo "Uploading into: $TARGET"
-          lftp -c "$SETTINGS; $OPEN; mirror --reverse --only-newer --verbose --parallel=2 --exclude-glob .DS_Store site/listingspark-site/ $TARGET/"
+          # Find the site's web root: ~/domains/<domain>/public_html (must be exactly one).
+          ROOTS=$(sshpass -e ssh hostinger 'ls -d domains/*/public_html 2>/dev/null')
+          echo "Web roots found:"; echo "$ROOTS"
+          [ "$(echo "$ROOTS" | grep -c .)" = 1 ] || { echo "Expected exactly one domains/*/public_html"; exit 1; }
+          sshpass -e rsync -rlz --checksum --itemize-changes --exclude '.DS_Store' \
+            -e ssh site/listingspark-site/ "hostinger:$ROOTS/"
