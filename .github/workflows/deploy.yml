@@ -1,6 +1,6 @@
 # Uploads site/listingspark-site/ to Hostinger over SSH (rsync) whenever it changes on main.
 # Needs one repo secret (GitHub → Settings → Secrets and variables → Actions):
-#   FTP_PASSWORD  the hosting account password (Hostinger uses the same one for SSH)
+#   SSH_PASSWORD  the SSH password from hPanel → Advanced → SSH Access
 # Only files whose contents changed are uploaded. Nothing on the server is deleted.
 name: Deploy to Hostinger
 
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload
         env:
-          SSHPASS: ${{ secrets.FTP_PASSWORD }}
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
         run: |
           # Pasted secrets sometimes pick up a trailing newline or space.
           export SSHPASS="$(printf %s "$SSHPASS" | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//')"
