@@ -39,6 +39,8 @@ jobs:
         env:
           SSHPASS: ${{ secrets.FTP_PASSWORD }}
         run: |
+          # Pasted secrets sometimes pick up a trailing newline or space.
+          export SSHPASS="$(printf %s "$SSHPASS" | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//')"
           # Find the site's web root: ~/domains/<domain>/public_html (must be exactly one).
           ROOTS=$(sshpass -e ssh hostinger 'ls -d domains/*/public_html 2>/dev/null')
           echo "Web roots found:"; echo "$ROOTS"
